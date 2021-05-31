@@ -1,15 +1,15 @@
-file(GLOB HEADER_LIST CONFIGURE_DEPENDS "${CVE_SOURCE_DIR}/include/*.h")
-file(GLOB SOURCES CONFIGURE_DEPENDS "*.cpp")
+file(GLOB HEADER_LIST CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/include/*.h")
+file(GLOB SOURCE_LIST CONFIGURE_DEPENDS "*.cpp")
 
 include_directories(
-    ${CVE_SOURCE_DIR}/include/
+    ${PROJECT_SOURCE_DIR}/include/
 	${GLFW_INCLUDE_DIR}
 	${GLM_INCLUDE_DIR}
 )
 
-configure_file(${CVE_SOURCE_DIR}/include/CVEConfig.h.in CVEConfig.h)
+configure_file(${PROJECT_SOURCE_DIR}/include/CVEConfig.h.in ${PROJECT_SOURCE_DIR}/include/CVEConfig.h)
 
-add_library(CVE ${SOURCES} ${HEADERS})
+add_library(CVE ${SOURCE_LIST} ${HEADER_LIST})
 
 target_include_directories(CVE PUBLIC ../include)
 
