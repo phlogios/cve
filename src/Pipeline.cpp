@@ -190,4 +190,12 @@ namespace CVE {
         vkDestroyPipeline(device, graphicsPipeline, nullptr);
         vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
     }
+
+    const VkPipeline& Pipeline::GetVkPipeline() const noexcept {
+        return graphicsPipeline;
+    }
+
+    const VkPipelineLayout& Pipeline::GetVkPipelineLayout() const noexcept {
+        return pipelineLayout;
+    }
 }

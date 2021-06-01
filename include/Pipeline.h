@@ -9,11 +9,6 @@ namespace CVE {
 		Pipeline();
 		~Pipeline();
 
-		VkDevice device;
-
-		VkPipelineLayout pipelineLayout;
-		VkPipeline graphicsPipeline;
-
 		VkShaderModule createShaderModule(const std::vector<char>& code);
 		void createGraphicsPipeline(
 			const VkDevice& device,
@@ -24,5 +19,12 @@ namespace CVE {
 			const VkRenderPass& renderPass);
 
 		void destroy();
+
+		const VkPipeline& GetVkPipeline() const noexcept;
+		const VkPipelineLayout& GetVkPipelineLayout() const noexcept;
+	private:
+		VkDevice device;
+		VkPipelineLayout pipelineLayout;
+		VkPipeline graphicsPipeline;
 	};
 }

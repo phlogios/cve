@@ -36,9 +36,6 @@
 //#define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
 
-const uint32_t WIDTH = 800;
-const uint32_t HEIGHT = 600;
-
 const std::string MODEL_PATH = "resources/models/viking_room.obj";
 const std::string TEXTURE_PATH = "resources/textures/viking_room.png";
 
@@ -81,10 +78,13 @@ namespace CVE {
         Renderer();
         ~Renderer();
         void run() {
-            initWindow();
-            initVulkan();
             mainLoop();
             cleanup();
+        }
+
+        void init(uint32_t width, uint32_t height) {
+            initWindow(width, height);
+            initVulkan();
         }
 
     private:
@@ -136,7 +136,7 @@ namespace CVE {
         VkDeviceMemory depthImageMemory;
         VkImageView depthImageView;
 
-        VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
+        VkSampleCountFlagBits msaaSamples;
         VkImage colorImage;
         VkDeviceMemory colorImageMemory;
         VkImageView colorImageView;
@@ -148,7 +148,7 @@ namespace CVE {
 
         GLFWwindow* window;
 
-        void initWindow();
+        void initWindow(uint32_t width, uint32_t height);
         static void framebufferResizeCallback(GLFWwindow* window, int width, int height);
         void initVulkan();
         VkSampleCountFlagBits getMaxUsableSampleCount();
