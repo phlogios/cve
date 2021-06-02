@@ -189,7 +189,9 @@ namespace CVE {
         void createDescriptorPool();
         void createDescriptorSets();
         void createFramebuffers();
+        void createFramebufferGUI();
         void createRenderPass();
+        void createRenderPassGUI();
         void createDescriptorSetLayout();
         
         VkShaderModule createShaderModule(const std::vector<char>& code);

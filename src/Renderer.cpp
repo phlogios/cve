@@ -130,71 +130,13 @@ namespace CVE {
             throw std::runtime_error("failed to create descriptor pool for imgui!");
         }
 
-        VkAttachmentDescription attachment = {};
-        attachment.format = swapChainImageFormat;
-        attachment.samples = VK_SAMPLE_COUNT_1_BIT;
-        attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-        attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        attachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-        VkAttachmentReference colorAttachmentGUI = {};
-        colorAttachmentGUI.attachment = 0;
-        colorAttachmentGUI.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-        VkSubpassDescription subpass = {};
-        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-        subpass.colorAttachmentCount = 1;
-        subpass.pColorAttachments = &colorAttachmentGUI;
-
-        VkSubpassDependency dependency = {};
-        dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-        dependency.dstSubpass = 0;
-        dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        dependency.srcAccessMask = 0;  // or VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-
-        VkRenderPassCreateInfo info = {};
-        info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-        info.attachmentCount = 1;
-        info.pAttachments = &attachment;
-        info.subpassCount = 1;
-        info.pSubpasses = &subpass;
-        info.dependencyCount = 1;
-        info.pDependencies = &dependency;
-        if (vkCreateRenderPass(device, &info, nullptr, &renderPassGui) != VK_SUCCESS) {
-            throw std::runtime_error("Could not create Dear ImGui's render pass");
-        }
+        createRenderPassGUI();
 
         createCommandPool(&commandPoolGUI, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
         commandBuffersForGUI.resize(static_cast<uint32_t>(swapChainImages.size()));
         createCommandBuffers(commandBuffersForGUI.data(), static_cast<uint32_t>(commandBuffersForGUI.size()), commandPoolGUI);
 
-        {
-            VkImageView attachment[1];
-            VkFramebufferCreateInfo info = {};
-            info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-            info.renderPass = renderPassGui;
-            info.attachmentCount = 1;
-            info.pAttachments = attachment;
-            info.width = swapChainExtent.width;
-            info.height = swapChainExtent.height;
-            info.layers = 1;
-
-            framebuffersGUI.resize(swapChainImages.size());
-
-            for (uint32_t i = 0; i < swapChainImages.size(); i++)
-            {
-                attachment[0] = swapChainImageViews[i];
-                if (vkCreateFramebuffer(device, &info, VK_NULL_HANDLE, &framebuffersGUI[i]) != VK_SUCCESS) {
-                    throw std::runtime_error("could not create framebuffer for GUI");
-                }
-            }
-        }
-
+        createFramebufferGUI();
 
         //vulkan should be set up at this point, only imgui stuff below
 
@@ -399,7 +341,7 @@ namespace CVE {
     }
 
     void Renderer::createTextureImageView() {
-        textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
+        textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
     }
 
     void Renderer::generateMipmaps(VkImage image, VkFormat imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels) {
@@ -524,20 +466,20 @@ namespace CVE {
             texHeight,
             mipLevels,
             VK_SAMPLE_COUNT_1_BIT,
-            VK_FORMAT_R8G8B8A8_SRGB,
+            VK_FORMAT_R8G8B8A8_UNORM,
             VK_IMAGE_TILING_OPTIMAL,
             VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             textureImage,
             textureImageMemory);
 
-        transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels);
+        transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels);
         copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
         //transitioned to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL while generating mipmaps
 
         vkDestroyBuffer(device, stagingBuffer, nullptr);
         vkFreeMemory(device, stagingBufferMemory, nullptr);
-        generateMipmaps(textureImage, VK_FORMAT_R8G8B8A8_SRGB, texWidth, texHeight, mipLevels);
+        generateMipmaps(textureImage, VK_FORMAT_R8G8B8A8_UNORM, texWidth, texHeight, mipLevels);
     }
 
     void Renderer::createImage(uint32_t width, uint32_t height, uint32_t mipLevels, VkSampleCountFlagBits numSamples, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory) {
@@ -1017,6 +959,28 @@ namespace CVE {
         }
     }
 
+    void Renderer::createFramebufferGUI() {
+        VkImageView attachment[1];
+        VkFramebufferCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        info.renderPass = renderPassGui;
+        info.attachmentCount = 1;
+        info.pAttachments = attachment;
+        info.width = swapChainExtent.width;
+        info.height = swapChainExtent.height;
+        info.layers = 1;
+
+        framebuffersGUI.resize(swapChainImages.size());
+
+        for (uint32_t i = 0; i < swapChainImages.size(); i++)
+        {
+            attachment[0] = swapChainImageViews[i];
+            if (vkCreateFramebuffer(device, &info, VK_NULL_HANDLE, &framebuffersGUI[i]) != VK_SUCCESS) {
+                throw std::runtime_error("could not create framebuffer for GUI");
+            }
+        }
+    }
+
     void Renderer::createRenderPass() {
         VkAttachmentDescription colorAttachment{};
         colorAttachment.format = swapChainImageFormat;
@@ -1031,7 +995,6 @@ namespace CVE {
         VkAttachmentReference colorAttachmentRef{};
         colorAttachmentRef.attachment = 0;
         colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
 
         VkAttachmentDescription depthAttachment{};
         depthAttachment.format = findDepthFormat();
@@ -1091,6 +1054,48 @@ namespace CVE {
         }
 
     }
+
+    void Renderer::createRenderPassGUI() {
+        VkAttachmentDescription attachment = {};
+        attachment.format = swapChainImageFormat;
+        attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+        VkAttachmentReference colorAttachmentGUI = {};
+        colorAttachmentGUI.attachment = 0;
+        colorAttachmentGUI.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkSubpassDescription subpass = {};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &colorAttachmentGUI;
+
+        VkSubpassDependency dependency = {};
+        dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+        dependency.dstSubpass = 0;
+        dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependency.srcAccessMask = 0;  // or VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+        VkRenderPassCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        info.attachmentCount = 1;
+        info.pAttachments = &attachment;
+        info.subpassCount = 1;
+        info.pSubpasses = &subpass;
+        info.dependencyCount = 1;
+        info.pDependencies = &dependency;
+        if (vkCreateRenderPass(device, &info, nullptr, &renderPassGui) != VK_SUCCESS) {
+            throw std::runtime_error("Could not create Dear ImGui's render pass");
+        }
+    }
+
 
     void Renderer::createDescriptorSetLayout() {
         VkDescriptorSetLayoutBinding uboLayoutBinding{};
@@ -1233,7 +1238,7 @@ namespace CVE {
 
     VkSurfaceFormatKHR Renderer::chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
         for (const auto& availableFormat : availableFormats) {
-            if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+            if (availableFormat.format == VK_FORMAT_B8G8R8A8_UNORM && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
                 return availableFormat;
             }
         }
@@ -1552,7 +1557,16 @@ namespace CVE {
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
-        ImGui::ShowDemoWindow();
+
+        ImGui::Begin("Hej");
+
+        if (ImGui::Button("Test")) {
+            std::cout << "Test\n";
+        }
+
+        ImGui::End();
+
+
         ImGui::Render();
         //ImDrawData* draw_data = ImGui::GetDrawData();
 
@@ -1619,19 +1633,21 @@ namespace CVE {
         createSwapChain();
         createImageViews();
         createRenderPass();
+        createRenderPassGUI();
 
         pipeline.createGraphicsPipeline(device, viewport, scissor, msaaSamples, descriptorSetLayout, renderPass);
 
         createColorResources();
         createDepthResources();
         createFramebuffers();
+        createFramebufferGUI();
         createUniformBuffers();
         createDescriptorPool();
         createDescriptorSets();
         commandBuffers.resize(swapChainImages.size());
         createCommandBuffers(commandBuffers.data(), static_cast<uint32_t>(swapChainImages.size()), commandPool);
 
-        commandBuffersForGUI.resize(static_cast<uint32_t>(swapChainImages.size()));
+        commandBuffersForGUI.resize(swapChainImages.size());
         createCommandBuffers(commandBuffersForGUI.data(), static_cast<uint32_t>(commandBuffersForGUI.size()), commandPoolGUI);
 
         recordCommandBuffersForModel();
@@ -1662,7 +1678,6 @@ namespace CVE {
         vkDestroyRenderPass(device, renderPass, nullptr);
         vkDestroyRenderPass(device, renderPassGui, nullptr);
 
-        vkDestroyCommandPool(device, commandPoolGUI, nullptr);
 
         for (auto imageView : swapChainImageViews) {
             vkDestroyImageView(device, imageView, nullptr);
@@ -1706,6 +1721,7 @@ namespace CVE {
             vkDestroyFence(device, inFlightFences[i], nullptr);
         }
         vkDestroyCommandPool(device, commandPool, nullptr);
+        vkDestroyCommandPool(device, commandPoolGUI, nullptr);
 
         vkDestroyDevice(device, nullptr);
 
