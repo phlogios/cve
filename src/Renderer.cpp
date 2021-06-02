@@ -1,5 +1,9 @@
 #include <Renderer.h>
 
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_vulkan.h"
+
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
@@ -78,7 +82,7 @@ namespace CVE {
 
         pipeline.createGraphicsPipeline(device, viewport, scissor, msaaSamples, descriptorSetLayout, renderPass);
 
-        createCommandPool();
+        createCommandPool(&commandPool);
         createColorResources();
         createDepthResources();
         createFramebuffers();
@@ -91,8 +95,142 @@ namespace CVE {
         createUniformBuffers();
         createDescriptorPool();
         createDescriptorSets();
-        createCommandBuffers();
+        commandBuffers.resize(swapChainFramebuffers.size());
+        createCommandBuffers(commandBuffers.data(), static_cast<uint32_t>(swapChainImages.size()), commandPool);
+        recordCommandBuffersForModel();
         createSyncObjects();
+    }
+
+    void Renderer::initImgui() {
+        //First set up vulkan stuff for imgui
+
+        //1: create descriptor pool for IMGUI
+        // the size of the pool is very oversize, but it's copied from imgui demo itself.
+        VkDescriptorPoolSize pool_sizes[] =
+        {
+            { VK_DESCRIPTOR_TYPE_SAMPLER, 1000 },
+            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
+            { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000 },
+            { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000 },
+            { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000 },
+            { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000 },
+            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000 },
+            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000 },
+            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000 },
+            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
+            { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000 }
+        };
+        VkDescriptorPoolCreateInfo pool_info = {};
+        pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+        pool_info.maxSets = 1000;
+        pool_info.poolSizeCount = std::size(pool_sizes);
+        pool_info.pPoolSizes = pool_sizes;
+        if (vkCreateDescriptorPool(device, &pool_info, nullptr, &descriptorPoolGUI) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create descriptor pool for imgui!");
+        }
+
+        VkAttachmentDescription attachment = {};
+        attachment.format = swapChainImageFormat;
+        attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+        VkAttachmentReference colorAttachmentGUI = {};
+        colorAttachmentGUI.attachment = 0;
+        colorAttachmentGUI.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkSubpassDescription subpass = {};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &colorAttachmentGUI;
+
+        VkSubpassDependency dependency = {};
+        dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+        dependency.dstSubpass = 0;
+        dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependency.srcAccessMask = 0;  // or VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+        VkRenderPassCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        info.attachmentCount = 1;
+        info.pAttachments = &attachment;
+        info.subpassCount = 1;
+        info.pSubpasses = &subpass;
+        info.dependencyCount = 1;
+        info.pDependencies = &dependency;
+        if (vkCreateRenderPass(device, &info, nullptr, &renderPassGui) != VK_SUCCESS) {
+            throw std::runtime_error("Could not create Dear ImGui's render pass");
+        }
+
+        createCommandPool(&commandPoolGUI, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+        commandBuffersForGUI.resize(static_cast<uint32_t>(swapChainImages.size()));
+        createCommandBuffers(commandBuffersForGUI.data(), static_cast<uint32_t>(commandBuffersForGUI.size()), commandPoolGUI);
+
+        {
+            VkImageView attachment[1];
+            VkFramebufferCreateInfo info = {};
+            info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            info.renderPass = renderPassGui;
+            info.attachmentCount = 1;
+            info.pAttachments = attachment;
+            info.width = swapChainExtent.width;
+            info.height = swapChainExtent.height;
+            info.layers = 1;
+
+            framebuffersGUI.resize(swapChainImages.size());
+
+            for (uint32_t i = 0; i < swapChainImages.size(); i++)
+            {
+                attachment[0] = swapChainImageViews[i];
+                if (vkCreateFramebuffer(device, &info, VK_NULL_HANDLE, &framebuffersGUI[i]) != VK_SUCCESS) {
+                    throw std::runtime_error("could not create framebuffer for GUI");
+                }
+            }
+        }
+
+
+        //vulkan should be set up at this point, only imgui stuff below
+
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO(); (void)io;
+
+        ImGui::StyleColorsDark();
+
+        ImGui_ImplGlfw_InitForVulkan(window, true);
+        ImGui_ImplVulkan_InitInfo init_info = {};
+        init_info.Instance = instance;
+        init_info.PhysicalDevice = physicalDevice;
+        init_info.Device = device;
+
+        QueueFamilyIndices familyIndices = findQueueFamilies(physicalDevice);
+
+        init_info.QueueFamily = familyIndices.graphicsFamily.value();
+        init_info.Queue = graphicsQueue;
+        init_info.PipelineCache = VK_NULL_HANDLE;
+        init_info.DescriptorPool = descriptorPoolGUI;
+        init_info.Allocator = VK_NULL_HANDLE;
+        init_info.MinImageCount = static_cast<uint32_t>(swapChainImages.size());
+        init_info.ImageCount = static_cast<uint32_t>(swapChainImages.size());;
+        init_info.CheckVkResultFn = VK_NULL_HANDLE;
+        init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+        ImGui_ImplVulkan_Init(&init_info, renderPassGui);
+        
+        {
+            //Todo: try doing this with the commandbuffer that is set up for the GUI
+            VkCommandBuffer command_buffer = beginSingleTimeCommands();
+            ImGui_ImplVulkan_CreateFontsTexture(command_buffer);
+            endSingleTimeCommands(command_buffer);
+
+            ImGui_ImplVulkan_DestroyFontUploadObjects();
+        }
     }
 
     VkSampleCountFlagBits Renderer::getMaxUsableSampleCount() {
@@ -561,62 +699,6 @@ namespace CVE {
         }
     }
 
-    void Renderer::createCommandBuffers() {
-        commandBuffers.resize(swapChainFramebuffers.size());
-        VkCommandBufferAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        allocInfo.commandPool = commandPool;
-        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocInfo.commandBufferCount = (uint32_t)commandBuffers.size();
-
-        if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
-            throw std::runtime_error("failed to allocate command buffers!");
-        }
-
-        for (size_t i = 0; i < commandBuffers.size(); i++) {
-            VkCommandBufferBeginInfo beginInfo{};
-            beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-            beginInfo.flags = 0; // Optional
-            beginInfo.pInheritanceInfo = nullptr; // Optional
-
-            if (vkBeginCommandBuffer(commandBuffers[i], &beginInfo) != VK_SUCCESS) {
-                throw std::runtime_error("failed to begin recording command buffer!");
-            }
-
-            VkRenderPassBeginInfo renderPassInfo{};
-            renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-            renderPassInfo.renderPass = renderPass;
-            renderPassInfo.framebuffer = swapChainFramebuffers[i];
-
-            renderPassInfo.renderArea.offset = { 0, 0 };
-            renderPassInfo.renderArea.extent = swapChainExtent;
-
-            std::array<VkClearValue, 2> clearValues{};
-            clearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
-            clearValues[1].depthStencil = { 1.0f, 0 };
-
-            renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-            renderPassInfo.pClearValues = clearValues.data();
-
-            vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-            vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.GetVkPipeline());
-
-            VkBuffer vertexBuffers[] = { vertexBuffer };
-            VkDeviceSize offsets[] = { 0 };
-            vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
-
-            vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-
-            vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.GetVkPipelineLayout(), 0, 1, &descriptorSets[i], 0, nullptr);
-
-            vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
-            vkCmdEndRenderPass(commandBuffers[i]);
-            if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
-                throw std::runtime_error("failed to record command buffer!");
-            }
-        }
-    }
-
     uint32_t Renderer::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
         VkPhysicalDeviceMemoryProperties memProperties;
         vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
@@ -840,16 +922,73 @@ namespace CVE {
         }
     }
 
-    void Renderer::createCommandPool() {
+    void Renderer::createCommandPool(VkCommandPool* _commandPool, VkCommandPoolCreateFlags flags) {
         QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
 
         VkCommandPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
-        poolInfo.flags = 0; // Optional
+        poolInfo.flags = flags;
 
-        if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+        if (vkCreateCommandPool(device, &poolInfo, nullptr, _commandPool) != VK_SUCCESS) {
             throw std::runtime_error("failed to create command pool!");
+        }
+    }
+
+    void Renderer::createCommandBuffers(VkCommandBuffer* commandBuffer, uint32_t commandBufferCount, VkCommandPool& commandPool) {
+        VkCommandBufferAllocateInfo commandBufferAllocateInfo = {};
+        commandBufferAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        commandBufferAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        commandBufferAllocateInfo.commandPool = commandPool;
+        commandBufferAllocateInfo.commandBufferCount = commandBufferCount;
+
+        if (vkAllocateCommandBuffers(device, &commandBufferAllocateInfo, commandBuffer) != VK_SUCCESS) {
+            throw std::runtime_error("failed to allocate command buffers!");
+        }
+    }
+
+    void Renderer::recordCommandBuffersForModel() {
+        for (size_t i = 0; i < commandBuffers.size(); i++) {
+            VkCommandBufferBeginInfo beginInfo{};
+            beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            beginInfo.flags = 0; // Optional
+            beginInfo.pInheritanceInfo = nullptr; // Optional
+
+            if (vkBeginCommandBuffer(commandBuffers[i], &beginInfo) != VK_SUCCESS) {
+                throw std::runtime_error("failed to begin recording command buffer!");
+            }
+
+            VkRenderPassBeginInfo renderPassInfo{};
+            renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            renderPassInfo.renderPass = renderPass;
+            renderPassInfo.framebuffer = swapChainFramebuffers[i];
+
+            renderPassInfo.renderArea.offset = { 0, 0 };
+            renderPassInfo.renderArea.extent = swapChainExtent;
+
+            std::array<VkClearValue, 2> clearValues{};
+            clearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
+            clearValues[1].depthStencil = { 1.0f, 0 };
+
+            renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+            renderPassInfo.pClearValues = clearValues.data();
+
+            vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+            vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.GetVkPipeline());
+
+            VkBuffer vertexBuffers[] = { vertexBuffer };
+            VkDeviceSize offsets[] = { 0 };
+            vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
+
+            vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+
+            vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.GetVkPipelineLayout(), 0, 1, &descriptorSets[i], 0, nullptr);
+
+            vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+            vkCmdEndRenderPass(commandBuffers[i]);
+            if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
+                throw std::runtime_error("failed to record command buffer!");
+            }
         }
     }
 
@@ -916,7 +1055,7 @@ namespace CVE {
         colorAttachmentResolve.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         colorAttachmentResolve.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         colorAttachmentResolve.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        colorAttachmentResolve.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        colorAttachmentResolve.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
         VkAttachmentReference colorAttachmentResolveRef{};
         colorAttachmentResolveRef.attachment = 2;
@@ -1358,6 +1497,7 @@ namespace CVE {
         imagesInFlight[imageIndex] = inFlightFences[currentFrame];
 
         updateUniformBuffer(imageIndex);
+        drawGUI(imageIndex);
 
         VkSubmitInfo submitInfo{};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -1368,8 +1508,10 @@ namespace CVE {
         submitInfo.pWaitSemaphores = waitSemaphores;
         submitInfo.pWaitDstStageMask = waitStages;
 
-        submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &commandBuffers[imageIndex];
+        std::array<VkCommandBuffer, 2> cmdbufs = { commandBuffers[imageIndex], commandBuffersForGUI[imageIndex] };
+
+        submitInfo.commandBufferCount = 2;
+        submitInfo.pCommandBuffers = cmdbufs.data();
 
         VkSemaphore signalSemaphores[] = { renderFinishedSemaphores[currentFrame] };
         submitInfo.signalSemaphoreCount = 1;
@@ -1391,6 +1533,7 @@ namespace CVE {
         presentInfo.pSwapchains = swapChains;
         presentInfo.pImageIndices = &imageIndex;
         presentInfo.pResults = nullptr; // Optional
+        
         vkQueuePresentKHR(presentQueue, &presentInfo);
 
         if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized) {
@@ -1402,6 +1545,40 @@ namespace CVE {
         }
 
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+    }
+
+    void Renderer::drawGUI(uint32_t imageIndex) {
+        // Start the Dear ImGui frame
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+        ImGui::ShowDemoWindow();
+        ImGui::Render();
+        //ImDrawData* draw_data = ImGui::GetDrawData();
+
+        {
+            VkCommandBufferBeginInfo info = {};
+            info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            info.flags |= VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            vkBeginCommandBuffer(commandBuffersForGUI[imageIndex], &info);
+        }
+        static VkClearValue clearColor = { 0.0f, 0.0f, 0.0f, 1.0f };
+        {
+            VkRenderPassBeginInfo info = {};
+            info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            info.renderPass = renderPassGui;
+            info.framebuffer = framebuffersGUI[imageIndex];
+            info.renderArea.extent.width = swapChainExtent.width;
+            info.renderArea.extent.height = swapChainExtent.height;
+            info.clearValueCount = 1;
+            info.pClearValues = &clearColor;
+            vkCmdBeginRenderPass(commandBuffersForGUI[imageIndex], &info, VK_SUBPASS_CONTENTS_INLINE);
+        }
+        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffersForGUI[imageIndex]);
+        vkCmdEndRenderPass(commandBuffersForGUI[imageIndex]);
+        if (vkEndCommandBuffer(commandBuffersForGUI[imageIndex]) != VK_SUCCESS) {
+            throw std::runtime_error("failed to end commandbuffer for gui");
+        }
     }
 
     void Renderer::updateUniformBuffer(uint32_t imageIndex) {
@@ -1426,6 +1603,8 @@ namespace CVE {
     }
 
     void Renderer::recreateSwapChain() {
+        //it's possible that the number of swapchain images has changed
+
         int width = 0, height = 0;
         glfwGetFramebufferSize(window, &width, &height);
         while (width == 0 || height == 0) {
@@ -1449,7 +1628,13 @@ namespace CVE {
         createUniformBuffers();
         createDescriptorPool();
         createDescriptorSets();
-        createCommandBuffers();
+        commandBuffers.resize(swapChainImages.size());
+        createCommandBuffers(commandBuffers.data(), static_cast<uint32_t>(swapChainImages.size()), commandPool);
+
+        commandBuffersForGUI.resize(static_cast<uint32_t>(swapChainImages.size()));
+        createCommandBuffers(commandBuffersForGUI.data(), static_cast<uint32_t>(commandBuffersForGUI.size()), commandPoolGUI);
+
+        recordCommandBuffersForModel();
     }
 
     void Renderer::cleanupSwapChain() {
@@ -1464,12 +1649,20 @@ namespace CVE {
         for (auto framebuffer : swapChainFramebuffers) {
             vkDestroyFramebuffer(device, framebuffer, nullptr);
         }
+        for (auto framebuffer : framebuffersGUI) {
+            vkDestroyFramebuffer(device, framebuffer, nullptr);
+        }
+
 
         vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
+        vkFreeCommandBuffers(device, commandPoolGUI, static_cast<uint32_t>(commandBuffersForGUI.size()), commandBuffersForGUI.data());
 
         pipeline.destroy();
 
         vkDestroyRenderPass(device, renderPass, nullptr);
+        vkDestroyRenderPass(device, renderPassGui, nullptr);
+
+        vkDestroyCommandPool(device, commandPoolGUI, nullptr);
 
         for (auto imageView : swapChainImageViews) {
             vkDestroyImageView(device, imageView, nullptr);
@@ -1486,6 +1679,11 @@ namespace CVE {
     }
 
     void Renderer::cleanup() {
+        ImGui_ImplVulkan_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+        vkDestroyDescriptorPool(device, descriptorPoolGUI, nullptr);
+
         cleanupSwapChain();
 
         vkDestroySampler(device, textureSampler, nullptr);

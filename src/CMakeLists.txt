@@ -5,11 +5,18 @@ include_directories(
     ${PROJECT_SOURCE_DIR}/include/
 	${GLFW_INCLUDE_DIR}
 	${GLM_INCLUDE_DIR}
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
 )
 
 configure_file(${PROJECT_SOURCE_DIR}/include/CVEConfig.h.in ${PROJECT_SOURCE_DIR}/include/CVEConfig.h)
 
-add_library(CVE ${SOURCE_LIST} ${HEADER_LIST})
+add_library(
+    CVE
+    ${SOURCE_LIST}
+    ${HEADER_LIST}
+    ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp ${IMGUI_DIR}/imgui.cpp ${IMGUI_DIR}/imgui_draw.cpp ${IMGUI_DIR}/imgui_demo.cpp ${IMGUI_DIR}/imgui_tables.cpp ${IMGUI_DIR}/imgui_widgets.cpp
+)
 
 target_include_directories(CVE PUBLIC ../include)
 

@@ -85,6 +85,7 @@ namespace CVE {
         void init(uint32_t width, uint32_t height) {
             initWindow(width, height);
             initVulkan();
+            initImgui();
         }
 
     private:
@@ -101,13 +102,17 @@ namespace CVE {
         VkExtent2D swapChainExtent;
         std::vector<VkImageView> swapChainImageViews;
         VkRenderPass renderPass;
+        VkRenderPass renderPassGui;
         VkDescriptorSetLayout descriptorSetLayout;
 
         Pipeline pipeline;
 
         std::vector<VkFramebuffer> swapChainFramebuffers;
+        std::vector<VkFramebuffer> framebuffersGUI;
         VkCommandPool commandPool;
         std::vector<VkCommandBuffer> commandBuffers;
+        VkCommandPool commandPoolGUI;
+        std::vector<VkCommandBuffer> commandBuffersForGUI;
         std::vector<VkSemaphore> imageAvailableSemaphores; // one for each concurrent frame
         std::vector<VkSemaphore> renderFinishedSemaphores;
         std::vector<VkFence> inFlightFences;
@@ -125,6 +130,8 @@ namespace CVE {
 
         VkDescriptorPool descriptorPool;
         std::vector<VkDescriptorSet> descriptorSets;
+
+        VkDescriptorPool descriptorPoolGUI;
 
         uint32_t mipLevels;
         VkImage textureImage;
@@ -151,6 +158,7 @@ namespace CVE {
         void initWindow(uint32_t width, uint32_t height);
         static void framebufferResizeCallback(GLFWwindow* window, int width, int height);
         void initVulkan();
+        void initImgui();
         VkSampleCountFlagBits getMaxUsableSampleCount();
         void loadModel();
         VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
@@ -167,7 +175,9 @@ namespace CVE {
         void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipLevels);
         void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
         void createSyncObjects();
-        void createCommandBuffers();
+        void createCommandPool(VkCommandPool* _commandPool, VkCommandPoolCreateFlags flags = 0);
+        void createCommandBuffers(VkCommandBuffer* commandBuffer, uint32_t commandBufferCount, VkCommandPool& commandPool);
+        void recordCommandBuffersForModel();
         uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
         void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
         void createVertexBuffer();
@@ -178,7 +188,6 @@ namespace CVE {
         void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
         void createDescriptorPool();
         void createDescriptorSets();
-        void createCommandPool();
         void createFramebuffers();
         void createRenderPass();
         void createDescriptorSetLayout();
@@ -218,6 +227,7 @@ namespace CVE {
         void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo);
         void mainLoop();
         void drawFrame();
+        void drawGUI(uint32_t imageIndex);
         void updateUniformBuffer(uint32_t imageIndex);
         void recreateSwapChain();
         void cleanupSwapChain();

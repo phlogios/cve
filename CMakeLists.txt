@@ -32,6 +32,8 @@ if (WIN32)
 	set(GLFW_INCLUDE_DIR ${glfw3_DIR}/include)
 endif()
 
+set(IMGUI_DIR ${PROJECT_SOURCE_DIR}/dependencies/imgui)
+
 find_package(Vulkan REQUIRED)
 
 # engine code is here
