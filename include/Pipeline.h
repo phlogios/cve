@@ -2,6 +2,7 @@
 
 #include "vulkan/vulkan.h"
 #include <vector>
+#include <string>
 
 namespace CVE {
 	class Pipeline {
@@ -16,7 +17,10 @@ namespace CVE {
 			const VkRect2D& scissor,
 			VkSampleCountFlagBits msaaSamples,
 			const VkDescriptorSetLayout& descriptorSetLayout,
-			const VkRenderPass& renderPass);
+			const VkRenderPass& renderPass,
+			const std::string& name,
+			std::vector<VkVertexInputBindingDescription> inputBindings,
+			std::vector<VkVertexInputAttributeDescription> inputAttributes);
 
 		void destroy();
 
@@ -26,5 +30,8 @@ namespace CVE {
 		VkDevice device;
 		VkPipelineLayout pipelineLayout;
 		VkPipeline graphicsPipeline;
+
+		std::vector<VkVertexInputBindingDescription> inputBindings;
+		std::vector<VkVertexInputAttributeDescription> inputAttributes;
 	};
 }

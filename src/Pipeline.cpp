@@ -6,6 +6,7 @@
 #include "Vertex.h"
 #include <iostream>
 
+
 namespace CVE {
 	Pipeline::Pipeline() {
 
@@ -35,11 +36,14 @@ namespace CVE {
         const VkRect2D& scissor,
         VkSampleCountFlagBits msaaSamples,
         const VkDescriptorSetLayout& descriptorSetLayout,
-        const VkRenderPass& renderPass) {
+        const VkRenderPass& renderPass,
+        const std::string& name,
+        std::vector<VkVertexInputBindingDescription> inputBindings,
+        std::vector<VkVertexInputAttributeDescription> inputAttributes) {
         this->device = device;
 
-        auto vertShaderCode = readFile("resources/shaders/vert.spv");
-        auto fragShaderCode = readFile("resources/shaders/frag.spv");
+        auto vertShaderCode = readFile("resources/shaders/" + name + ".vert.spv");
+        auto fragShaderCode = readFile("resources/shaders/" + name + ".frag.spv");
 
         std::cout << "Loaded shader spv: " << vertShaderCode.size() << " bytes\n";
         std::cout << "Loaded shader spv: " << fragShaderCode.size() << " bytes\n";
@@ -61,15 +65,15 @@ namespace CVE {
 
         VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
-        auto bindingDescription = Vertex::getBindingDescription();
-        auto attributeDescriptions = Vertex::getAttributeDescriptions();
+        this->inputBindings = inputBindings;
+        this->inputAttributes = inputAttributes;
 
         VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
         vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-        vertexInputInfo.vertexBindingDescriptionCount = 1;
-        vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
-        vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
-        vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+        vertexInputInfo.vertexBindingDescriptionCount = static_cast<uint32_t>(inputBindings.size());
+        vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(this->inputAttributes.size());
+        vertexInputInfo.pVertexBindingDescriptions = this->inputBindings.data();
+        vertexInputInfo.pVertexAttributeDescriptions = this->inputAttributes.data();
 
         VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
         inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;

@@ -35,14 +35,21 @@
 
 //#define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
+#include "ConfigWindow.h"
+#include <Renderable.h>
+#include <Model.h>
 
-const std::string MODEL_PATH = "resources/models/viking_room.obj";
-const std::string TEXTURE_PATH = "resources/textures/viking_room.png";
+const std::string MODEL_PATH = "resources/models/sword_002.obj";
+const std::string TEXTURE_PATH = "resources/textures/sword_002_diff.png";
 
 struct UniformBufferObject {
     glm::mat4 model;
     glm::mat4 view;
     glm::mat4 proj;
+};
+
+struct InstanceData {
+    glm::vec3 position;
 };
 
 const std::vector<const char*> validationLayers = {
@@ -75,11 +82,12 @@ void DestroyDebugUtilsMessengerEXT(
 namespace CVE {
     class Renderer {
     public:
+        friend class ConfigWindow;
+
         Renderer();
         ~Renderer();
         void run() {
             mainLoop();
-            cleanup();
         }
 
         void init(uint32_t width, uint32_t height) {
@@ -87,6 +95,9 @@ namespace CVE {
             initVulkan();
             initImgui();
         }
+
+        int numInstances;
+        std::vector<Renderable> renderables;
 
     private:
         VkInstance instance;
@@ -104,8 +115,10 @@ namespace CVE {
         VkRenderPass renderPass;
         VkRenderPass renderPassGui;
         VkDescriptorSetLayout descriptorSetLayout;
+        
 
         Pipeline pipeline;
+        Pipeline instancingPipeline;
 
         std::vector<VkFramebuffer> swapChainFramebuffers;
         std::vector<VkFramebuffer> framebuffersGUI;
@@ -118,12 +131,15 @@ namespace CVE {
         std::vector<VkFence> inFlightFences;
         std::vector<VkFence> imagesInFlight;
         size_t currentFrame = 0;
-        std::vector<Vertex> vertices;
-        std::vector<uint32_t> indices;
+
+        Model swordModel;
+
         VkBuffer vertexBuffer;
         VkDeviceMemory vertexBufferMemory;
         VkBuffer indexBuffer;
         VkDeviceMemory indexBufferMemory;
+        VkBuffer instanceBuffer;
+        VkDeviceMemory instanceBufferMemory;
 
         std::vector<VkBuffer> uniformBuffers;
         std::vector<VkDeviceMemory> uniformBuffersMemory;
@@ -155,6 +171,8 @@ namespace CVE {
 
         GLFWwindow* window;
 
+        ConfigWindow configWindow;
+
         void initWindow(uint32_t width, uint32_t height);
         static void framebufferResizeCallback(GLFWwindow* window, int width, int height);
         void initVulkan();
@@ -180,8 +198,8 @@ namespace CVE {
         void recordCommandBuffersForModel();
         uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
         void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
-        void createVertexBuffer();
-        void createIndexBuffer();
+        void createVertexBuffer(const Model& model);
+        void createIndexBuffer(const Model& model);
         void createUniformBuffers();
         VkCommandBuffer beginSingleTimeCommands();
         void endSingleTimeCommands(VkCommandBuffer commandBuffer);
@@ -193,6 +211,7 @@ namespace CVE {
         void createRenderPass();
         void createRenderPassGUI();
         void createDescriptorSetLayout();
+        void createPipelines();
         
         VkShaderModule createShaderModule(const std::vector<char>& code);
         void createImageViews();
@@ -230,6 +249,7 @@ namespace CVE {
         void mainLoop();
         void drawFrame();
         void drawGUI(uint32_t imageIndex);
+        void drawModel(uint32_t imageIndex);
         void updateUniformBuffer(uint32_t imageIndex);
         void recreateSwapChain();
         void cleanupSwapChain();
@@ -237,5 +257,7 @@ namespace CVE {
         bool checkValidationLayerSupport();
         std::vector<const char*> getRequiredExtensions();
         std::vector<VkExtensionProperties> getAvailableExtensions();
+
+        void buildInstanceBuffer();
     };
 }

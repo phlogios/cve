@@ -9,6 +9,7 @@
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
+#include <random>
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -46,7 +47,9 @@ void DestroyDebugUtilsMessengerEXT(
 }
 
 namespace CVE {
-    Renderer::Renderer() {
+    Renderer::Renderer() :
+        numInstances(50000),
+        configWindow(this) {
     }
 
     Renderer::~Renderer() {
@@ -80,9 +83,9 @@ namespace CVE {
         createRenderPass();
         createDescriptorSetLayout();
 
-        pipeline.createGraphicsPipeline(device, viewport, scissor, msaaSamples, descriptorSetLayout, renderPass);
+        createPipelines();
 
-        createCommandPool(&commandPool);
+        createCommandPool(&commandPool, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
         createColorResources();
         createDepthResources();
         createFramebuffers();
@@ -90,15 +93,17 @@ namespace CVE {
         createTextureImageView();
         createTextureSampler();
         loadModel();
-        createVertexBuffer();
-        createIndexBuffer();
+        createVertexBuffer(swordModel);
+        createIndexBuffer(swordModel);
         createUniformBuffers();
         createDescriptorPool();
         createDescriptorSets();
         commandBuffers.resize(swapChainFramebuffers.size());
         createCommandBuffers(commandBuffers.data(), static_cast<uint32_t>(swapChainImages.size()), commandPool);
-        recordCommandBuffersForModel();
         createSyncObjects();
+
+        buildInstanceBuffer();
+        recordCommandBuffersForModel();
     }
 
     void Renderer::initImgui() {
@@ -124,7 +129,7 @@ namespace CVE {
         pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
         pool_info.maxSets = 1000;
-        pool_info.poolSizeCount = std::size(pool_sizes);
+        pool_info.poolSizeCount = static_cast<uint32_t>(std::size(pool_sizes));
         pool_info.pPoolSizes = pool_sizes;
         if (vkCreateDescriptorPool(device, &pool_info, nullptr, &descriptorPoolGUI) != VK_SUCCESS) {
             throw std::runtime_error("failed to create descriptor pool for imgui!");
@@ -180,54 +185,14 @@ namespace CVE {
         vkGetPhysicalDeviceProperties(physicalDevice, &physicalDeviceProperties);
 
         VkSampleCountFlags counts = physicalDeviceProperties.limits.framebufferColorSampleCounts & physicalDeviceProperties.limits.framebufferDepthSampleCounts;
-        if (counts & VK_SAMPLE_COUNT_64_BIT) { return VK_SAMPLE_COUNT_64_BIT; }
-        if (counts & VK_SAMPLE_COUNT_32_BIT) { return VK_SAMPLE_COUNT_32_BIT; }
-        if (counts & VK_SAMPLE_COUNT_16_BIT) { return VK_SAMPLE_COUNT_16_BIT; }
-        if (counts & VK_SAMPLE_COUNT_8_BIT) { return VK_SAMPLE_COUNT_8_BIT; }
-        if (counts & VK_SAMPLE_COUNT_4_BIT) { return VK_SAMPLE_COUNT_4_BIT; }
-        if (counts & VK_SAMPLE_COUNT_2_BIT) { return VK_SAMPLE_COUNT_2_BIT; }
-
+        std::array<VkSampleCountFlagBits, 6> sampleCountFlagBits{ VK_SAMPLE_COUNT_64_BIT, VK_SAMPLE_COUNT_32_BIT, VK_SAMPLE_COUNT_16_BIT, VK_SAMPLE_COUNT_8_BIT, VK_SAMPLE_COUNT_4_BIT, VK_SAMPLE_COUNT_2_BIT };
+        for (auto sampleCount : sampleCountFlagBits) { if (counts & sampleCount) { return sampleCount; } };
+        
         return VK_SAMPLE_COUNT_1_BIT;
     }
 
     void Renderer::loadModel() {
-        tinyobj::attrib_t attrib;
-        std::vector<tinyobj::shape_t> shapes;
-        std::vector<tinyobj::material_t> materials;
-        std::string warn, err;
-
-        if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH.c_str())) {
-            throw std::runtime_error(warn + err);
-        }
-
-        std::unordered_map<Vertex, uint32_t> uniqueVertices;
-
-        for (const auto& shape : shapes) {
-            for (const auto& index : shape.mesh.indices) {
-                Vertex vertex{};
-
-                vertex.pos = {
-                    attrib.vertices[3 * index.vertex_index + 0],
-                    attrib.vertices[3 * index.vertex_index + 1],
-                    attrib.vertices[3 * index.vertex_index + 2]
-                };
-
-                vertex.texCoord = {
-                    attrib.texcoords[2 * index.texcoord_index + 0],
-                    1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
-                };
-
-                vertex.color = { 1.0f, 1.0f, 1.0f };
-
-                if (uniqueVertices.count(vertex) == 0) {
-                    uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
-                    vertices.push_back(vertex);
-                }
-                indices.push_back(uniqueVertices[vertex]);
-            }
-        }
-
-        std::cout << "Loaded model\n";
+        swordModel = Model::loadModel(MODEL_PATH);
     }
 
     VkFormat Renderer::findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features) {
@@ -685,8 +650,8 @@ namespace CVE {
         vkBindBufferMemory(device, buffer, bufferMemory, 0);
     }
 
-    void Renderer::createVertexBuffer() {
-        VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+    void Renderer::createVertexBuffer(const Model& model) {
+        VkDeviceSize bufferSize = sizeof(model.vertices[0]) * model.vertices.size();
 
         VkBuffer stagingBuffer;
         VkDeviceMemory stagingBufferMemory;
@@ -698,7 +663,7 @@ namespace CVE {
 
         void* data;
         vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-        memcpy(data, vertices.data(), (size_t)bufferSize); //this operation is asynchronous, but guaranteed to be complete as of the next call to vkQueueSubmit
+        memcpy(data, model.vertices.data(), (size_t)bufferSize); //this operation is asynchronous, but guaranteed to be complete as of the next call to vkQueueSubmit
         vkUnmapMemory(device, stagingBufferMemory);
 
         createBuffer(bufferSize,
@@ -713,8 +678,8 @@ namespace CVE {
         vkFreeMemory(device, stagingBufferMemory, nullptr);
     }
 
-    void Renderer::createIndexBuffer() {
-        VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+    void Renderer::createIndexBuffer(const Model& model) {
+        VkDeviceSize bufferSize = sizeof(model.indices[0]) * model.indices.size();
 
         VkBuffer stagingBuffer;
         VkDeviceMemory stagingBufferMemory;
@@ -726,7 +691,7 @@ namespace CVE {
 
         void* data;
         vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-        memcpy(data, indices.data(), (size_t)bufferSize);
+        memcpy(data, model.indices.data(), (size_t)bufferSize);
         vkUnmapMemory(device, stagingBufferMemory);
 
         createBuffer(bufferSize,
@@ -891,46 +856,7 @@ namespace CVE {
 
     void Renderer::recordCommandBuffersForModel() {
         for (size_t i = 0; i < commandBuffers.size(); i++) {
-            VkCommandBufferBeginInfo beginInfo{};
-            beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-            beginInfo.flags = 0; // Optional
-            beginInfo.pInheritanceInfo = nullptr; // Optional
-
-            if (vkBeginCommandBuffer(commandBuffers[i], &beginInfo) != VK_SUCCESS) {
-                throw std::runtime_error("failed to begin recording command buffer!");
-            }
-
-            VkRenderPassBeginInfo renderPassInfo{};
-            renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-            renderPassInfo.renderPass = renderPass;
-            renderPassInfo.framebuffer = swapChainFramebuffers[i];
-
-            renderPassInfo.renderArea.offset = { 0, 0 };
-            renderPassInfo.renderArea.extent = swapChainExtent;
-
-            std::array<VkClearValue, 2> clearValues{};
-            clearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
-            clearValues[1].depthStencil = { 1.0f, 0 };
-
-            renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-            renderPassInfo.pClearValues = clearValues.data();
-
-            vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-            vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.GetVkPipeline());
-
-            VkBuffer vertexBuffers[] = { vertexBuffer };
-            VkDeviceSize offsets[] = { 0 };
-            vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
-
-            vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-
-            vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.GetVkPipelineLayout(), 0, 1, &descriptorSets[i], 0, nullptr);
-
-            vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
-            vkCmdEndRenderPass(commandBuffers[i]);
-            if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
-                throw std::runtime_error("failed to record command buffer!");
-            }
+            drawModel(i);
         }
     }
 
@@ -1096,7 +1022,6 @@ namespace CVE {
         }
     }
 
-
     void Renderer::createDescriptorSetLayout() {
         VkDescriptorSetLayoutBinding uboLayoutBinding{};
         uboLayoutBinding.binding = 0;
@@ -1123,8 +1048,6 @@ namespace CVE {
             throw std::runtime_error("failed to create descriptor set layout!");
         }
     }
-
-
 
     void Renderer::createImageViews() {
         swapChainImageViews.resize(swapChainImages.size());
@@ -1502,6 +1425,8 @@ namespace CVE {
         imagesInFlight[imageIndex] = inFlightFences[currentFrame];
 
         updateUniformBuffer(imageIndex);
+        //vkResetCommandBuffer(commandBuffers[imageIndex], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
+        //drawModel(imageIndex);
         drawGUI(imageIndex);
 
         VkSubmitInfo submitInfo{};
@@ -1513,9 +1438,12 @@ namespace CVE {
         submitInfo.pWaitSemaphores = waitSemaphores;
         submitInfo.pWaitDstStageMask = waitStages;
 
-        std::array<VkCommandBuffer, 2> cmdbufs = { commandBuffers[imageIndex], commandBuffersForGUI[imageIndex] };
+        std::array<VkCommandBuffer, 2> cmdbufs = {
+            commandBuffers[imageIndex],
+            commandBuffersForGUI[imageIndex]
+        };
 
-        submitInfo.commandBufferCount = 2;
+        submitInfo.commandBufferCount = static_cast<uint32_t>(cmdbufs.size());
         submitInfo.pCommandBuffers = cmdbufs.data();
 
         VkSemaphore signalSemaphores[] = { renderFinishedSemaphores[currentFrame] };
@@ -1558,13 +1486,7 @@ namespace CVE {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        ImGui::Begin("Hej");
-
-        if (ImGui::Button("Test")) {
-            std::cout << "Test\n";
-        }
-
-        ImGui::End();
+        configWindow.draw();
 
 
         ImGui::Render();
@@ -1576,7 +1498,6 @@ namespace CVE {
             info.flags |= VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             vkBeginCommandBuffer(commandBuffersForGUI[imageIndex], &info);
         }
-        static VkClearValue clearColor = { 0.0f, 0.0f, 0.0f, 1.0f };
         {
             VkRenderPassBeginInfo info = {};
             info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -1584,14 +1505,57 @@ namespace CVE {
             info.framebuffer = framebuffersGUI[imageIndex];
             info.renderArea.extent.width = swapChainExtent.width;
             info.renderArea.extent.height = swapChainExtent.height;
-            info.clearValueCount = 1;
-            info.pClearValues = &clearColor;
+            info.clearValueCount = 0;
+            info.pClearValues = VK_NULL_HANDLE;
             vkCmdBeginRenderPass(commandBuffersForGUI[imageIndex], &info, VK_SUBPASS_CONTENTS_INLINE);
         }
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffersForGUI[imageIndex]);
         vkCmdEndRenderPass(commandBuffersForGUI[imageIndex]);
         if (vkEndCommandBuffer(commandBuffersForGUI[imageIndex]) != VK_SUCCESS) {
             throw std::runtime_error("failed to end commandbuffer for gui");
+        }
+    }
+
+    void Renderer::drawModel(uint32_t imageIndex) {
+        VkCommandBufferBeginInfo beginInfo{};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT;
+        beginInfo.pInheritanceInfo = nullptr; // Optional
+
+        if (vkBeginCommandBuffer(commandBuffers[imageIndex], &beginInfo) != VK_SUCCESS) {
+            throw std::runtime_error("failed to begin recording command buffer!");
+        }
+
+        VkRenderPassBeginInfo renderPassInfo{};
+        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        renderPassInfo.renderPass = renderPass;
+        renderPassInfo.framebuffer = swapChainFramebuffers[imageIndex];
+
+        renderPassInfo.renderArea.offset = { 0, 0 };
+        renderPassInfo.renderArea.extent = swapChainExtent;
+
+        std::array<VkClearValue, 2> clearValues{};
+        clearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
+        clearValues[1].depthStencil = { 1.0f, 0 };
+
+        renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+        renderPassInfo.pClearValues = clearValues.data();
+
+        vkCmdBeginRenderPass(commandBuffers[imageIndex], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBindPipeline(commandBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, instancingPipeline.GetVkPipeline());
+
+        VkDeviceSize offsets[] = { 0 };
+        vkCmdBindVertexBuffers(commandBuffers[imageIndex], 0, 1, &vertexBuffer, offsets);
+        vkCmdBindVertexBuffers(commandBuffers[imageIndex], 1, 1, &instanceBuffer, offsets);
+
+        vkCmdBindIndexBuffer(commandBuffers[imageIndex], indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+
+        vkCmdBindDescriptorSets(commandBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, instancingPipeline.GetVkPipelineLayout(), 0, 1, &descriptorSets[imageIndex], 0, nullptr);
+
+        vkCmdDrawIndexed(commandBuffers[imageIndex], static_cast<uint32_t>(swordModel.indices.size()), numInstances, 0, 0, 0);
+        vkCmdEndRenderPass(commandBuffers[imageIndex]);
+        if (vkEndCommandBuffer(commandBuffers[imageIndex]) != VK_SUCCESS) {
+            throw std::runtime_error("failed to record command buffer!");
         }
     }
 
@@ -1604,9 +1568,9 @@ namespace CVE {
             .count();
 
         UniformBufferObject ubo{};
-        ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-        ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-        ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.f);
+        ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+        ubo.view = glm::lookAt(glm::vec3(5.0f * cosf(time), 2.0f + cosf(time), 5.0f * sinf(time)), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+        ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 100.f);
 
         ubo.proj[1][1] *= -1; //flip projection y-axis because GLM is designed for OpenGL
 
@@ -1635,7 +1599,7 @@ namespace CVE {
         createRenderPass();
         createRenderPassGUI();
 
-        pipeline.createGraphicsPipeline(device, viewport, scissor, msaaSamples, descriptorSetLayout, renderPass);
+        createPipelines();
 
         createColorResources();
         createDepthResources();
@@ -1651,6 +1615,35 @@ namespace CVE {
         createCommandBuffers(commandBuffersForGUI.data(), static_cast<uint32_t>(commandBuffersForGUI.size()), commandPoolGUI);
 
         recordCommandBuffersForModel();
+    }
+
+    void Renderer::createPipelines() {
+        std::vector<VkVertexInputBindingDescription> bindingDescriptions;
+        bindingDescriptions.push_back(Vertex::getBindingDescription());
+
+        std::vector<VkVertexInputAttributeDescription> attributeDescriptions{};
+        attributeDescriptions.resize(3);
+        auto baseVertexAttributeDescriptions = Vertex::getAttributeDescriptions();
+        attributeDescriptions[0] = baseVertexAttributeDescriptions[0];
+        attributeDescriptions[1] = baseVertexAttributeDescriptions[1];
+        attributeDescriptions[2] = baseVertexAttributeDescriptions[2];
+
+        pipeline.createGraphicsPipeline(device, viewport, scissor, msaaSamples, descriptorSetLayout, renderPass, "shader", bindingDescriptions, attributeDescriptions);
+
+        VkVertexInputBindingDescription instancingBindingDescription;
+        instancingBindingDescription.binding = 1;
+        instancingBindingDescription.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+        instancingBindingDescription.stride = sizeof(InstanceData);
+        bindingDescriptions.push_back(instancingBindingDescription);
+
+        VkVertexInputAttributeDescription instancingAttributeDescription;
+        instancingAttributeDescription.binding = 1;
+        instancingAttributeDescription.location = 3;
+        instancingAttributeDescription.format = VK_FORMAT_R32G32B32_SFLOAT;
+        instancingAttributeDescription.offset = 0;
+        attributeDescriptions.push_back(instancingAttributeDescription);
+
+        instancingPipeline.createGraphicsPipeline(device, viewport, scissor, msaaSamples, descriptorSetLayout, renderPass, "instancing", bindingDescriptions, attributeDescriptions);
     }
 
     void Renderer::cleanupSwapChain() {
@@ -1792,5 +1785,35 @@ namespace CVE {
             std::cout << '\t' << extension.extensionName << '\n';
         }
         return extensions;
+    }
+
+    void Renderer::buildInstanceBuffer() {
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+        VkDeviceSize bufferSize = sizeof(InstanceData) * numInstances;
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+        std::default_random_engine rndGenerator(1337);
+        std::uniform_real_distribution<float> uniformDist(0.0, 1.0);
+
+        renderables.resize(numInstances);
+        for (int i = 0; i < numInstances; i++) {
+            renderables[i].position = glm::vec3(uniformDist(rndGenerator) * 100.0f - 50.0f, 0, uniformDist(rndGenerator) * 100.0f - 50.0f);
+        }
+        std::vector<InstanceData> instanceDataVector;
+        instanceDataVector.resize(numInstances);
+        for (int i = 0; i < numInstances; i++) {
+            instanceDataVector[i].position = renderables[i].position;
+        }
+
+        void* data;
+        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+        memcpy(data, instanceDataVector.data(), (size_t)bufferSize); //this operation is asynchronous, but guaranteed to be complete as of the next call to vkQueueSubmit
+        vkUnmapMemory(device, stagingBufferMemory);
+
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, instanceBuffer, instanceBufferMemory);
+        copyBuffer(stagingBuffer, instanceBuffer, bufferSize);
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
     }
 }
