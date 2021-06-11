@@ -81,7 +81,6 @@ namespace CVE {
         createSwapChain();
         createImageViews();
         createRenderPass();
-        createDescriptorSetLayout();
 
         createPipelines();
 
@@ -92,9 +91,8 @@ namespace CVE {
         createTextureImage();
         createTextureImageView();
         createTextureSampler();
-        loadModel();
-        createVertexBuffer(swordModel);
-        createIndexBuffer(swordModel);
+        loadModels();
+
         createUniformBuffers();
         createDescriptorPool();
         createDescriptorSets();
@@ -191,8 +189,26 @@ namespace CVE {
         return VK_SAMPLE_COUNT_1_BIT;
     }
 
-    void Renderer::loadModel() {
-        swordModel = Model::loadModel(MODEL_PATH);
+    void Renderer::loadModels() {
+        swordModel = Model::loadModel("resources/models/sword_002.obj");
+        roomModel = Model::loadModel("resources/models/viking_room.obj");
+
+        loadedModels.insert(swordModel);
+        loadedModels.insert(roomModel);
+
+        totalVertexBufferMemoryNeeded = 0;
+        totalIndexBufferMemoryNeeded = 0;
+        for (auto& model : loadedModels) {
+            totalVertexBufferMemoryNeeded += model.vertices.size() * sizeof(Vertex);
+            totalIndexBufferMemoryNeeded += model.indices.size() * sizeof(uint32_t);
+        }
+
+        allocateMemory(totalVertexBufferMemoryNeeded, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &combinedVertexBufferMemory);
+
+        for (auto& model : loadedModels) {
+            createVertexBuffer(model);
+            createIndexBuffer(model);
+        }
     }
 
     VkFormat Renderer::findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features) {
@@ -414,7 +430,7 @@ namespace CVE {
         VkBuffer stagingBuffer;
         VkDeviceMemory stagingBufferMemory;
 
-        createBuffer(imageSize,
+        createBufferAndAllocate(imageSize,
             VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
             stagingBuffer,
@@ -619,7 +635,7 @@ namespace CVE {
         throw std::runtime_error("failed to find suitable memory type!");
     }
 
-    void Renderer::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
+    void Renderer::createBufferAndAllocate(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
         VkBufferCreateInfo bufferInfo{};
         bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         bufferInfo.size = size;
@@ -634,20 +650,20 @@ namespace CVE {
         VkMemoryRequirements memRequirements;
         vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
 
-        VkMemoryAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocInfo.allocationSize = memRequirements.size;
-        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-        //NOTE: You're not supposed to call vkAllocateMemory for every individual buffer
-        //The right way to allocate memory for a large number of objects at the same time
-        //is to create a custom allocator that splits up a single allocation
-        //among many different objects by using the offset parameters that we've seen in many functions.
-        if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
-            throw std::runtime_error("failed to allocate vertex buffer memory!");
-        }
+        allocateMemory(memRequirements.size, properties, &bufferMemory, memRequirements.memoryTypeBits);
 
         vkBindBufferMemory(device, buffer, bufferMemory, 0);
+    }
+
+    void Renderer::allocateMemory(VkDeviceSize size, VkMemoryPropertyFlags properties, VkDeviceMemory* bufferMemory, uint32_t memoryTypeBits) {
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = size;
+        allocInfo.memoryTypeIndex = findMemoryType(memoryTypeBits, properties);
+
+        if (vkAllocateMemory(device, &allocInfo, nullptr, bufferMemory) != VK_SUCCESS) {
+            throw std::runtime_error("failed to allocate vertex buffer memory!");
+        }
     }
 
     void Renderer::createVertexBuffer(const Model& model) {
@@ -655,7 +671,7 @@ namespace CVE {
 
         VkBuffer stagingBuffer;
         VkDeviceMemory stagingBufferMemory;
-        createBuffer(bufferSize,
+        createBufferAndAllocate(bufferSize,
             VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
             stagingBuffer,
@@ -666,13 +682,13 @@ namespace CVE {
         memcpy(data, model.vertices.data(), (size_t)bufferSize); //this operation is asynchronous, but guaranteed to be complete as of the next call to vkQueueSubmit
         vkUnmapMemory(device, stagingBufferMemory);
 
-        createBuffer(bufferSize,
+        createBufferAndAllocate(bufferSize, 
             VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-            vertexBuffer,
-            vertexBufferMemory);
+            vertexBuffers[model],
+            vertexBufferMemory[model]);
 
-        copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+        copyBuffer(stagingBuffer, vertexBuffers[model], bufferSize);
 
         vkDestroyBuffer(device, stagingBuffer, nullptr);
         vkFreeMemory(device, stagingBufferMemory, nullptr);
@@ -683,7 +699,7 @@ namespace CVE {
 
         VkBuffer stagingBuffer;
         VkDeviceMemory stagingBufferMemory;
-        createBuffer(bufferSize,
+        createBufferAndAllocate(bufferSize,
             VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
             stagingBuffer,
@@ -694,11 +710,11 @@ namespace CVE {
         memcpy(data, model.indices.data(), (size_t)bufferSize);
         vkUnmapMemory(device, stagingBufferMemory);
 
-        createBuffer(bufferSize,
+        createBufferAndAllocate(bufferSize,
             VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffers[model], indexBufferMemory[model]);
 
-        copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+        copyBuffer(stagingBuffer, indexBuffers[model], bufferSize);
 
         vkDestroyBuffer(device, stagingBuffer, nullptr);
         vkFreeMemory(device, stagingBufferMemory, nullptr);
@@ -711,7 +727,7 @@ namespace CVE {
         uniformBuffersMemory.resize(swapChainImages.size());
 
         for (size_t i = 0; i < swapChainImages.size(); i++) {
-            createBuffer(bufferSize,
+            createBufferAndAllocate(bufferSize,
                 VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                 uniformBuffers[i],
@@ -784,7 +800,9 @@ namespace CVE {
     }
 
     void Renderer::createDescriptorSets() {
-        std::vector<VkDescriptorSetLayout> layouts(swapChainImages.size(), descriptorSetLayout);
+        //We have just 1 pool
+        //For each frame, we have a layout
+        std::vector<VkDescriptorSetLayout> layouts(swapChainImages.size(), pipeline.GetDescriptorSetLayout());
         VkDescriptorSetAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         allocInfo.descriptorPool = descriptorPool;
@@ -1022,32 +1040,7 @@ namespace CVE {
         }
     }
 
-    void Renderer::createDescriptorSetLayout() {
-        VkDescriptorSetLayoutBinding uboLayoutBinding{};
-        uboLayoutBinding.binding = 0;
-        uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        uboLayoutBinding.descriptorCount = 1;
-        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-        uboLayoutBinding.pImmutableSamplers = nullptr; //Optional
 
-        VkDescriptorSetLayoutBinding samplerLayoutBinding{};
-        samplerLayoutBinding.binding = 1;
-        samplerLayoutBinding.descriptorCount = 1;
-        samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        samplerLayoutBinding.pImmutableSamplers = nullptr;
-        samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-        std::array<VkDescriptorSetLayoutBinding, 2> bindings = { uboLayoutBinding, samplerLayoutBinding };
-
-        VkDescriptorSetLayoutCreateInfo layoutInfo{};
-        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-        layoutInfo.pBindings = bindings.data();
-
-        if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create descriptor set layout!");
-        }
-    }
 
     void Renderer::createImageViews() {
         swapChainImageViews.resize(swapChainImages.size());
@@ -1210,7 +1203,7 @@ namespace CVE {
     void Renderer::createSwapChain() {
         SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
         VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
-        VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
+        VkPresentModeKHR presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;//chooseSwapPresentMode(swapChainSupport.presentModes);
         VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
 
         uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
@@ -1343,9 +1336,9 @@ namespace CVE {
 
         VkApplicationInfo appInfo{};
         appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-        appInfo.pApplicationName = "Hello Triangle";
+        appInfo.pApplicationName = "App1";
         appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-        appInfo.pEngineName = "No Engine";
+        appInfo.pEngineName = "CVE";
         appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
         appInfo.apiVersion = VK_API_VERSION_1_0;
 
@@ -1397,7 +1390,12 @@ namespace CVE {
     void Renderer::mainLoop() {
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
+            auto startTime = std::chrono::high_resolution_clock::now();
             drawFrame();
+            auto frameDuration = std::chrono::high_resolution_clock::now();
+            frameTime = std::chrono::duration<float, std::chrono::seconds::period>
+                (frameDuration - startTime)
+                .count();
         }
 
         vkDeviceWaitIdle(device);
@@ -1542,17 +1540,39 @@ namespace CVE {
         renderPassInfo.pClearValues = clearValues.data();
 
         vkCmdBeginRenderPass(commandBuffers[imageIndex], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+        
+        //begin draw instanced model
         vkCmdBindPipeline(commandBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, instancingPipeline.GetVkPipeline());
 
         VkDeviceSize offsets[] = { 0 };
-        vkCmdBindVertexBuffers(commandBuffers[imageIndex], 0, 1, &vertexBuffer, offsets);
+        vkCmdBindVertexBuffers(commandBuffers[imageIndex], 0, 1, &vertexBuffers[swordModel], offsets);
         vkCmdBindVertexBuffers(commandBuffers[imageIndex], 1, 1, &instanceBuffer, offsets);
 
-        vkCmdBindIndexBuffer(commandBuffers[imageIndex], indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdBindIndexBuffer(commandBuffers[imageIndex], indexBuffers[swordModel], 0, VK_INDEX_TYPE_UINT32);
 
         vkCmdBindDescriptorSets(commandBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, instancingPipeline.GetVkPipelineLayout(), 0, 1, &descriptorSets[imageIndex], 0, nullptr);
 
         vkCmdDrawIndexed(commandBuffers[imageIndex], static_cast<uint32_t>(swordModel.indices.size()), numInstances, 0, 0, 0);
+        //end draw instanced model
+        
+
+        
+        //begin draw model
+        vkCmdBindPipeline(commandBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.GetVkPipeline());
+
+        VkDeviceSize offsets2[] = { 0 };
+        vkCmdBindVertexBuffers(commandBuffers[imageIndex], 0, 1, &vertexBuffers[roomModel], offsets2);
+
+        vkCmdBindIndexBuffer(commandBuffers[imageIndex], indexBuffers[roomModel], 0, VK_INDEX_TYPE_UINT32);
+
+        vkCmdBindDescriptorSets(commandBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.GetVkPipelineLayout(), 0, 1, &descriptorSets[imageIndex], 0, nullptr);
+
+        vkCmdDrawIndexed(commandBuffers[imageIndex], static_cast<uint32_t>(roomModel.indices.size()), 1, 0, 0, 0);
+        //end draw model
+        
+
+
         vkCmdEndRenderPass(commandBuffers[imageIndex]);
         if (vkEndCommandBuffer(commandBuffers[imageIndex]) != VK_SUCCESS) {
             throw std::runtime_error("failed to record command buffer!");
@@ -1628,7 +1648,7 @@ namespace CVE {
         attributeDescriptions[1] = baseVertexAttributeDescriptions[1];
         attributeDescriptions[2] = baseVertexAttributeDescriptions[2];
 
-        pipeline.createGraphicsPipeline(device, viewport, scissor, msaaSamples, descriptorSetLayout, renderPass, "shader", bindingDescriptions, attributeDescriptions);
+        pipeline.createGraphicsPipeline(device, viewport, scissor, msaaSamples, renderPass, "shader", bindingDescriptions, attributeDescriptions);
 
         VkVertexInputBindingDescription instancingBindingDescription;
         instancingBindingDescription.binding = 1;
@@ -1643,7 +1663,7 @@ namespace CVE {
         instancingAttributeDescription.offset = 0;
         attributeDescriptions.push_back(instancingAttributeDescription);
 
-        instancingPipeline.createGraphicsPipeline(device, viewport, scissor, msaaSamples, descriptorSetLayout, renderPass, "instancing", bindingDescriptions, attributeDescriptions);
+        instancingPipeline.createGraphicsPipeline(device, viewport, scissor, msaaSamples, renderPass, "instancing", bindingDescriptions, attributeDescriptions);
     }
 
     void Renderer::cleanupSwapChain() {
@@ -1700,13 +1720,18 @@ namespace CVE {
         vkDestroyImage(device, textureImage, nullptr);
         vkFreeMemory(device, textureImageMemory, nullptr);
 
-        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
+        pipeline.destroy();
+        instancingPipeline.destroy();
 
-        vkDestroyBuffer(device, indexBuffer, nullptr);
-        vkFreeMemory(device, indexBufferMemory, nullptr);
-
-        vkDestroyBuffer(device, vertexBuffer, nullptr);
-        vkFreeMemory(device, vertexBufferMemory, nullptr);
+        for (auto& model : loadedModels) {
+            vkDestroyBuffer(device, indexBuffers[model], nullptr);
+            vkFreeMemory(device, indexBufferMemory[model], nullptr);
+        }
+        
+        for (auto& model : loadedModels) {
+            vkDestroyBuffer(device, vertexBuffers[model], nullptr);
+            vkFreeMemory(device, vertexBufferMemory[model], nullptr);
+        }
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
@@ -1791,7 +1816,7 @@ namespace CVE {
         VkBuffer stagingBuffer;
         VkDeviceMemory stagingBufferMemory;
         VkDeviceSize bufferSize = sizeof(InstanceData) * numInstances;
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+        createBufferAndAllocate(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
 
         std::default_random_engine rndGenerator(1337);
         std::uniform_real_distribution<float> uniformDist(0.0, 1.0);
@@ -1811,7 +1836,7 @@ namespace CVE {
         memcpy(data, instanceDataVector.data(), (size_t)bufferSize); //this operation is asynchronous, but guaranteed to be complete as of the next call to vkQueueSubmit
         vkUnmapMemory(device, stagingBufferMemory);
 
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, instanceBuffer, instanceBufferMemory);
+        createBufferAndAllocate(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, instanceBuffer, instanceBufferMemory);
         copyBuffer(stagingBuffer, instanceBuffer, bufferSize);
         vkDestroyBuffer(device, stagingBuffer, nullptr);
         vkFreeMemory(device, stagingBufferMemory, nullptr);

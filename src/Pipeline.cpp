@@ -35,12 +35,13 @@ namespace CVE {
         const VkViewport& viewport,
         const VkRect2D& scissor,
         VkSampleCountFlagBits msaaSamples,
-        const VkDescriptorSetLayout& descriptorSetLayout,
         const VkRenderPass& renderPass,
         const std::string& name,
         std::vector<VkVertexInputBindingDescription> inputBindings,
-        std::vector<VkVertexInputAttributeDescription> inputAttributes) {
+        std::vector<VkVertexInputAttributeDescription> inputAttributes)
+    {
         this->device = device;
+        createDescriptorSetLayout();
 
         auto vertShaderCode = readFile("resources/shaders/" + name + ".vert.spv");
         auto fragShaderCode = readFile("resources/shaders/" + name + ".frag.spv");
@@ -190,9 +191,39 @@ namespace CVE {
         vkDestroyShaderModule(device, vertShaderModule, nullptr);
     }
 
+    void Pipeline::createDescriptorSetLayout() {
+        //Todo: this should be dynamically defined by data
+
+        VkDescriptorSetLayoutBinding uboLayoutBinding{};
+        uboLayoutBinding.binding = 0;
+        uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        uboLayoutBinding.descriptorCount = 1;
+        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        uboLayoutBinding.pImmutableSamplers = nullptr; //Optional
+
+        VkDescriptorSetLayoutBinding samplerLayoutBinding{};
+        samplerLayoutBinding.binding = 0;
+        samplerLayoutBinding.descriptorCount = 1;
+        samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        samplerLayoutBinding.pImmutableSamplers = nullptr;
+        samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        std::array<VkDescriptorSetLayoutBinding, 2> bindings = { uboLayoutBinding, samplerLayoutBinding };
+
+        VkDescriptorSetLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+        layoutInfo.pBindings = bindings.data();
+
+        if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create descriptor set layout!");
+        }
+    }
+
     void Pipeline::destroy() {
         vkDestroyPipeline(device, graphicsPipeline, nullptr);
         vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
     }
 
     const VkPipeline& Pipeline::GetVkPipeline() const noexcept {
@@ -201,5 +232,9 @@ namespace CVE {
 
     const VkPipelineLayout& Pipeline::GetVkPipelineLayout() const noexcept {
         return pipelineLayout;
+    }
+
+    const VkDescriptorSetLayout& Pipeline::GetDescriptorSetLayout() const noexcept {
+        return descriptorSetLayout;
     }
 }

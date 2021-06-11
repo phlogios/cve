@@ -16,7 +16,6 @@ namespace CVE {
 			const VkViewport& viewport,
 			const VkRect2D& scissor,
 			VkSampleCountFlagBits msaaSamples,
-			const VkDescriptorSetLayout& descriptorSetLayout,
 			const VkRenderPass& renderPass,
 			const std::string& name,
 			std::vector<VkVertexInputBindingDescription> inputBindings,
@@ -26,6 +25,9 @@ namespace CVE {
 
 		const VkPipeline& GetVkPipeline() const noexcept;
 		const VkPipelineLayout& GetVkPipelineLayout() const noexcept;
+
+		const VkDescriptorSetLayout& GetDescriptorSetLayout() const noexcept;
+
 	private:
 		VkDevice device;
 		VkPipelineLayout pipelineLayout;
@@ -33,5 +35,9 @@ namespace CVE {
 
 		std::vector<VkVertexInputBindingDescription> inputBindings;
 		std::vector<VkVertexInputAttributeDescription> inputAttributes;
+
+		VkDescriptorSetLayout descriptorSetLayout;
+
+		void createDescriptorSetLayout();
 	};
 }

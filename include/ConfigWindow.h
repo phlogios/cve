@@ -10,5 +10,7 @@ namespace CVE {
 		void draw();
 
 		Renderer* renderer;
+	private:
+		void drawFrameTimePlot();
 	};
 }

@@ -7,7 +7,7 @@
 
 namespace CVE {
 	Model::Model() {
-
+        std::cout << "Model constructor called\n";
 	}
 
 	Model::~Model() {
@@ -27,6 +27,7 @@ namespace CVE {
         std::unordered_map<Vertex, uint32_t> uniqueVertices;
 
         Model model;
+        model.name = path;
         for (const auto& shape : shapes) {
             for (const auto& index : shape.mesh.indices) {
                 Vertex vertex{};

@@ -39,7 +39,6 @@
 #include <Renderable.h>
 #include <Model.h>
 
-const std::string MODEL_PATH = "resources/models/sword_002.obj";
 const std::string TEXTURE_PATH = "resources/textures/sword_002_diff.png";
 
 struct UniformBufferObject {
@@ -98,6 +97,7 @@ namespace CVE {
 
         int numInstances;
         std::vector<Renderable> renderables;
+        float frameTime;
 
     private:
         VkInstance instance;
@@ -114,8 +114,6 @@ namespace CVE {
         std::vector<VkImageView> swapChainImageViews;
         VkRenderPass renderPass;
         VkRenderPass renderPassGui;
-        VkDescriptorSetLayout descriptorSetLayout;
-        
 
         Pipeline pipeline;
         Pipeline instancingPipeline;
@@ -133,11 +131,16 @@ namespace CVE {
         size_t currentFrame = 0;
 
         Model swordModel;
+        Model roomModel;
+        std::set<Model> loadedModels;
+        uint32_t totalVertexBufferMemoryNeeded;
+        uint32_t totalIndexBufferMemoryNeeded;
 
-        VkBuffer vertexBuffer;
-        VkDeviceMemory vertexBufferMemory;
-        VkBuffer indexBuffer;
-        VkDeviceMemory indexBufferMemory;
+        std::map<Model, VkBuffer> vertexBuffers;
+        std::map<Model, VkDeviceMemory> vertexBufferMemory;
+        VkDeviceMemory combinedVertexBufferMemory;
+        std::map<Model, VkBuffer> indexBuffers;
+        std::map<Model, VkDeviceMemory> indexBufferMemory;
         VkBuffer instanceBuffer;
         VkDeviceMemory instanceBufferMemory;
 
@@ -178,7 +181,7 @@ namespace CVE {
         void initVulkan();
         void initImgui();
         VkSampleCountFlagBits getMaxUsableSampleCount();
-        void loadModel();
+        void loadModels();
         VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
         VkFormat findDepthFormat();
         bool hasStencilComponent(VkFormat format);
@@ -197,7 +200,8 @@ namespace CVE {
         void createCommandBuffers(VkCommandBuffer* commandBuffer, uint32_t commandBufferCount, VkCommandPool& commandPool);
         void recordCommandBuffersForModel();
         uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
-        void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
+        void createBufferAndAllocate(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
+        void allocateMemory(VkDeviceSize size, VkMemoryPropertyFlags properties, VkDeviceMemory* bufferMemory, uint32_t memoryTypeBits = 255u);
         void createVertexBuffer(const Model& model);
         void createIndexBuffer(const Model& model);
         void createUniformBuffers();
